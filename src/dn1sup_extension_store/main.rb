@@ -14,7 +14,7 @@ module Dn1sup
 
   module ExtensionStore
     ID      = 'dn1sup_extension_store'
-    VERSION = '0.29.1'
+    VERSION = '0.30.0'
     REPO    = 'dn1test/dn1sup_extension_store'
     ASSET   = "#{ID}.rbz"
     PAGE_URL     = "https://github.com/#{REPO}/releases"

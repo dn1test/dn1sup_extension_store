@@ -7,9 +7,9 @@
 репозиториях (`dn1test/dn1sup_*`); этот репозиторий хранит только реестр
 каталога (`registry.json`: id/name/repo), необходимый для установки и обновлений.
 
-## [Unreleased]
+## [0.30.0] — 2026-10-26
 
-### DN1Sup Extension Store — переименование id
+### DN1Sup Extension Store (v0.30.0) — переименование id
 - **Id `dn1sup_ext_manager` → `dn1sup_extension_store`.** Переименованы файлы
   (`src/dn1sup_extension_store.rb`, `src/dn1sup_extension_store/`), модуль
   `Dn1sup::ExtManager` → `Dn1sup::ExtensionStore`, секция настроек
