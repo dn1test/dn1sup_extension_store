@@ -1923,7 +1923,7 @@ module Dn1sup
 
       @dialog = UI::HtmlDialog.new(
         dialog_title:    'DN1Sup Extension Store',
-        preferences_key: 'dn1sup_extension_store_store_window',
+        preferences_key: 'dn1sup_extension_store_window',
         scrollable:      true,
         resizable:       true,
         width:           860,
