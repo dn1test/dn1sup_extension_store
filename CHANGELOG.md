@@ -15,9 +15,9 @@
   `Dn1sup::ExtManager` → `Dn1sup::ExtensionStore`, секция настроек
   `DN1Sup ExtensionStore`, иконки, реестр и CI-артефакт
   (`packages/dn1sup_extension_store.rbz`).
-- Требуется ручной шаг: переименовать репозиторий на GitHub
-  `dn1test/dn1sup_ext_manager` → `dn1test/dn1sup_extension_store`, иначе
-  `REGISTRY_URL`/живые тесты указывают в 404.
+- Репозиторий переехал: новый `dn1test/dn1sup_extension_store`, старый
+  `dn1test/dn1sup_ext_manager` переведён в архив (его Releases остались
+  доступны для старых установок).
 - Совместимость: алиас `Dn1sup::ExtManager`, чтение настроек со fallback
   на старую секцию, предупреждение об устаревшем `dn1sup_ext_manager.rb`
   в Plugins.
