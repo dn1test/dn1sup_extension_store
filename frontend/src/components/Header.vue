@@ -88,6 +88,7 @@ const { isDark, toggleTheme } = useTheme()
 const tabs = computed(() => [
   { id: 'all', label: 'Все', count: props.counts.all ?? 0 },
   { id: 'installed', label: 'Установленные', count: props.counts.installed ?? 0 },
-  { id: 'updates', label: 'Обновления', count: props.counts.updates ?? 0 }
+  { id: 'updates', label: 'Обновления', count: props.counts.updates ?? 0 },
+  { id: 'hidden', label: 'Скрытые', count: props.counts.hidden ?? 0 }
 ])
 </script>

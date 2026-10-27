@@ -14,7 +14,7 @@ module Dn1sup
 
   module ExtensionStore
     ID      = 'dn1sup_extension_store'
-    VERSION = '0.32.0'
+    VERSION = '0.33.0'
     REPO    = 'dn1test/dn1sup_extension_store'
     ASSET   = "#{ID}.rbz"
     PAGE_URL     = "https://github.com/#{REPO}/releases"
@@ -195,6 +195,43 @@ module Dn1sup
       Dn1sup::Updater.log_error(e)
     end
 
+    def unhide_repo(repo)
+      return if repo.to_s.empty? || !defined?(Sketchup)
+
+      list = hidden_repos.reject { |r| r == repo.to_s }
+      pref_write( 'hidden_repos', list.empty? ? nil : list.join(','))
+    rescue StandardError => e
+      Dn1sup::Updater.log_error(e)
+    end
+
+    # Записи каталога, скрытые пользователем: найденные на GitHub +
+    # минимальные записи установленных в Plugins (если их repo скрыт).
+    # Собственная запись Store скрытию не подлежит.
+    def hidden_entries
+      hidden = hidden_repos
+      return [] if hidden.empty?
+
+      entries = []
+      known = {}
+      @discovered_entries.each do |e|
+        next unless e.is_a?(Hash)
+        next unless hidden.include?(e['repo'].to_s)
+
+        entries << e
+      end
+      installed_plugin_ids.each do |id|
+        repo = "#{OWNER}/#{id}"
+        next unless hidden.include?(repo)
+        next if known[id.to_s] || known[repo]
+
+        known[id.to_s] = true
+        known[repo] = true
+        entries << { 'id' => id.to_s, 'name' => id.to_s, 'description' => '',
+                     'repo' => repo, 'installed_only' => true }
+      end
+      uniq_entries(entries)
+    end
+
     # Уникализация записей каталога по id и repo (первая копия выигрывает).
     # Защита от накопившихся дублей в @discovered_entries (исторические
     # снапшоты, повторные запуски автопоиска): карточки не должны плодиться.
@@ -245,9 +282,10 @@ module Dn1sup
 
     # Запись каталога по id — собственная, среди найденных на GitHub или
     # среди установленных в Plugins (установка, удаление и имена работают
-    # для всех источников).
+    # для всех источников, включая скрытые — карточки вкладки «Скрытые»
+    # полные и поддерживают установку/обновление).
     def find_entry(id)
-      merged_entries.find { |e| e['id'].to_s == id.to_s }
+      (merged_entries + hidden_entries).find { |e| e.is_a?(Hash) && e['id'].to_s == id.to_s }
     end
 
     # Репозиторий удалён или переименован на GitHub (по данным repo_meta).
@@ -747,108 +785,140 @@ module Dn1sup
       list_map = release_lists || @releases_cache || {}
 
       entries.map do |entry|
-        id   = entry['id'].to_s
-        repo = entry['repo'].to_s
-        name = entry['name'].to_s.empty? ? id : entry['name'].to_s
-
-        # Репозиторий удалён/переименован: кэши релизов игнорируем (релизы
-        # нового репозитория по ключу старого показывали бы ложное обновление),
-        # сетевые запросы по старому имени не тратятся.
-        repo_stale = stale?(repo)
-        if repo_stale
-          release = {}
-          rel_list = []
-        else
-          release = check_releases ? latest_release(repo, force) : (rel_map[repo.to_s] || {})
-          rel_list = list_map[repo.to_s].is_a?(Array) ? list_map[repo.to_s] : []
-        end
-
-        installed_ver = installed_version(entry)
-        is_installed = !installed_ver.to_s.empty?
-
-        # Найденные на GitHub расширения показываем, только когда известны
-        # их релизы (без них нельзя ни версию показать, ни .rbz установить)
-        # либо когда расширение установлено: установленное видно всегда
-        # (информация, удаление), даже офлайн.
-        next nil if entry['discovered'] && rel_list.empty? && !is_installed
-
-        offered = Dn1sup::Updater.choose_release(rel_list)
-        offered = release if offered.nil? && release.is_a?(Hash) && release.key?('tag_name')
-
-        # Мёртвый репозиторий: неустановленные карточки исчезают из каталога
-        # (и из вкладки «Обновления»), установленные остаются с пометкой.
-        next nil if repo_stale && !is_installed
-
-        latest_tag   = offered ? offered['tag_name'].to_s : ''
-        release_body = offered ? offered['body'].to_s : ''
-        published_at = offered ? offered['published_at'].to_s : ''
-        release_url  = offered ? offered['html_url'].to_s : ''
-
-        # Находим .rbz ассет в релизе конкретного репозитория
-        rbz_asset  = find_rbz_asset(offered, entry['asset'])
-        asset_name = rbz_asset ? rbz_asset['name'].to_s : (entry['asset'] || "#{id}.rbz").to_s
-        # Есть ли .rbz в предлагаемом релизе: тег подняли, а архив ещё не
-        # собран — обновление видно, но установка упадёт. Флаг нужен UI,
-        # чтобы честно показать «релиз без архива».
-        has_asset = !rbz_asset.nil?
-        has_asset = true if offered.nil?
-
-        # Описание: из манифеста репозитория/релиза либо из записи каталога
-        desc = entry['description'].to_s
-        if desc.empty? && offered && !offered['name'].to_s.empty? && offered['name'] != latest_tag
-          desc = offered['name'].to_s
-        end
-
-        # Автор: из записи каталога, фолбэк — владелец репозитория на GitHub
-        author = entry['author'].to_s
-        author = repo.split('/').first.to_s if author.empty?
-
-        # Персональный лог изменений для этого расширения
-        changelog = extract_extension_changelog(release_body, entry, repo, rel_list)
-
-        # Актуальная версия расширения: из тега релиза репозитория либо из
-        # per-repo манифеста
-        ext_target_ver = !latest_tag.empty? ? latest_tag.sub(/\Av/i, '') : entry['version'].to_s
-
-        # Статус относительно предлагаемого релиза: 'update' / 'switch' / 'current' / nil.
-        # Для переизданных релизов без бампа версии — дата установки текущей сборки.
-        installed_at = Dn1sup::Updater.installed_at(id) if is_installed
-        status = safe_product_status(installed_ver, offered, rel_list, installed_at)
-        has_update = (status == 'update')
-
-        # Лог правок (коммиты) между установленной и предлагаемой версиями —
-        # если он уже загружен и относится именно к этой паре версий.
-        commits = []
-        cached = @commits_cache[repo.to_s]
-        if cached.is_a?(Hash) && cached['installed'].to_s == installed_ver.to_s &&
-           cached['offered'].to_s == ext_target_ver && cached['messages'].is_a?(Array)
-          commits = cached['messages']
-        end
-
-        {
-          'id'                => id,
-          'name'              => name,
-          'description'       => desc,
-          'author'            => author,
-          'repo'              => repo,
-          'asset'             => asset_name,
-          'discovered'        => !!entry['discovered'],
-          'repo_status'       => repo_stale ? stale_status(repo) : '',
-          'installed_version' => installed_ver,
-          'is_installed'      => is_installed,
-          'latest_version'    => ext_target_ver.empty? ? '—' : ext_target_ver,
-          'has_update'        => has_update,
-          'has_asset'         => has_asset,
-          'status'            => status.to_s,
-          'changelog'         => changelog,
-          'commits'           => commits,
-          'release_url'       => release_url,
-          'published_at'      => published_at
-        }
+        product_card_for(entry, rel_map, list_map, check_releases: check_releases, force: force)
       end.compact
     rescue StandardError => e
       Dn1sup::Updater.log_error(e)
       []
+    end
+
+    # Карточки скрытых расширений для вкладки «Скрытые»: полные данные
+    # (версия, «Что нового», коммиты) + флаг 'hidden'. Показываем даже без
+    # известных релизов и с мёртвым репозиторием — иначе скрытое без релизов
+    # исчезло бы из обоих списков и вернуть его было бы негде.
+    def hidden_products_data
+      ensure_updater!
+      entries = hidden_entries
+      return [] if entries.empty?
+
+      rel_map  = @release_cache || {}
+      list_map = @releases_cache || {}
+      entries.map do |entry|
+        card = product_card_for(entry, rel_map, list_map, hidden: true)
+        card['hidden'] = true if card.is_a?(Hash)
+        card
+      end.compact
+    rescue StandardError => e
+      Dn1sup::Updater.log_error(e)
+      []
+    end
+
+    # Одна карточка каталога по записи (общее для основного и скрытого списков).
+    # hidden: true — не отсеивать карточки без релизов / с мёртвым репозиторием.
+    def product_card_for(entry, rel_map, list_map, check_releases: false, force: false, hidden: false)
+      id   = entry['id'].to_s
+      repo = entry['repo'].to_s
+      name = entry['name'].to_s.empty? ? id : entry['name'].to_s
+
+      # Репозиторий удалён/переименован: кэши релизов игнорируем (релизы
+      # нового репозитория по ключу старого показывали бы ложное обновление),
+      # сетевые запросы по старому имени не тратятся.
+      repo_stale = stale?(repo)
+      if repo_stale
+        release = {}
+        rel_list = []
+      else
+        release = check_releases ? latest_release(repo, force) : (rel_map[repo.to_s] || {})
+        rel_list = list_map[repo.to_s].is_a?(Array) ? list_map[repo.to_s] : []
+      end
+
+      installed_ver = installed_version(entry)
+      is_installed = !installed_ver.to_s.empty?
+
+      # Найденные на GitHub расширения показываем, только когда известны
+      # их релизы (без них нельзя ни версию показать, ни .rbz установить)
+      # либо когда расширение установлено: установленное видно всегда
+      # (информация, удаление), даже офлайн. Скрытые показываем всегда —
+      # иначе скрытое без релизов исчезло бы из обоих списков.
+      return nil if !hidden && entry['discovered'] && rel_list.empty? && !is_installed
+
+      offered = Dn1sup::Updater.choose_release(rel_list)
+      offered = release if offered.nil? && release.is_a?(Hash) && release.key?('tag_name')
+
+      # Мёртвый репозиторий: неустановленные карточки исчезают из каталога
+      # (и из вкладки «Обновления»), установленные остаются с пометкой.
+      return nil if !hidden && repo_stale && !is_installed
+
+      latest_tag   = offered ? offered['tag_name'].to_s : ''
+      release_body = offered ? offered['body'].to_s : ''
+      published_at = offered ? offered['published_at'].to_s : ''
+      release_url  = offered ? offered['html_url'].to_s : ''
+
+      # Находим .rbz ассет в релизе конкретного репозитория
+      rbz_asset  = find_rbz_asset(offered, entry['asset'])
+      asset_name = rbz_asset ? rbz_asset['name'].to_s : (entry['asset'] || "#{id}.rbz").to_s
+      # Есть ли .rbz в предлагаемом релизе: тег подняли, а архив ещё не
+      # собран — обновление видно, но установка упадёт. Флаг нужен UI,
+      # чтобы честно показать «релиз без архива».
+      has_asset = !rbz_asset.nil?
+      has_asset = true if offered.nil?
+
+      # Описание: из манифеста репозитория/релиза либо из записи каталога
+      desc = entry['description'].to_s
+      if desc.empty? && offered && !offered['name'].to_s.empty? && offered['name'] != latest_tag
+        desc = offered['name'].to_s
+      end
+
+      # Автор: из записи каталога, фолбэк — владелец репозитория на GitHub
+      author = entry['author'].to_s
+      author = repo.split('/').first.to_s if author.empty?
+
+      # Персональный лог изменений для этого расширения
+      changelog = extract_extension_changelog(release_body, entry, repo, rel_list)
+
+      # Актуальная версия расширения: из тега релиза репозитория либо из
+      # per-repo манифеста
+        ext_target_ver = !latest_tag.empty? ? latest_tag.sub(/\Av/i, '') : entry['version'].to_s
+
+        # Статус относительно предлагаемого релиза: 'update' / 'switch' / 'current' / nil.
+        # Для переизданных релизов без бампа версии — дата установки текущей сборки.
+      installed_at = Dn1sup::Updater.installed_at(id) if is_installed
+      status = safe_product_status(installed_ver, offered, rel_list, installed_at)
+      has_update = (status == 'update')
+
+      # Лог правок (коммиты) между установленной и предлагаемой версиями —
+      # если он уже загружен и относится именно к этой паре версий.
+      commits = []
+      cached = @commits_cache[repo.to_s]
+      if cached.is_a?(Hash) && cached['installed'].to_s == installed_ver.to_s &&
+         cached['offered'].to_s == ext_target_ver && cached['messages'].is_a?(Array)
+        commits = cached['messages']
+      end
+
+      {
+        'id'                => id,
+        'name'              => name,
+        'description'       => desc,
+        'author'            => author,
+        'repo'              => repo,
+        'asset'             => asset_name,
+        'discovered'        => !!entry['discovered'],
+        'repo_status'       => repo_stale ? stale_status(repo) : '',
+        'installed_version' => installed_ver,
+        'is_installed'      => is_installed,
+        'latest_version'    => ext_target_ver.empty? ? '—' : ext_target_ver,
+        'has_update'        => has_update,
+        'has_asset'         => has_asset,
+        'status'            => status.to_s,
+        'changelog'         => changelog,
+        'commits'           => commits,
+        'release_url'       => release_url,
+        'published_at'      => published_at,
+        'hidden'            => !!hidden
+      }
+    rescue StandardError => e
+      Dn1sup::Updater.log_error(e)
+      nil
     end
 
     # ---- Совместимость копий апдейтера --------------------------------------
@@ -1710,6 +1780,7 @@ module Dn1sup
       payload = {
         'version'   => VERSION,
         'products'  => products.is_a?(Array) ? products : [],
+        'hidden'    => hidden_products_data,
         'sync'      => sync_payload
       }
       dlg.execute_script("window.pushState(#{JSON.generate(payload)});")
@@ -1849,6 +1920,12 @@ module Dn1sup
         repo = parse_json(param)['repo']
         hide_repo(repo)
         store_log("скрыт найденный репозиторий #{repo}")
+        send_products_to_dialog(force: false)
+      when 'unhide'
+        # Вернуть одно скрытое расширение в каталог (вкладка «Скрытые»)
+        repo = parse_json(param)['repo']
+        unhide_repo(repo)
+        store_log("возвращён скрытый репозиторий #{repo}")
         send_products_to_dialog(force: false)
       when 'log_js_error'
         log_js_error(param)

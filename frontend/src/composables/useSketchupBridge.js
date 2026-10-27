@@ -26,7 +26,8 @@ const isMock = !getSketchup()
 const state = reactive({
   ready: false,
   version: '…',
-  products: [],  // [{id,name,description,author,repo,asset,discovered,installed_version,is_installed,latest_version,has_update,has_asset,status,changelog,commits,release_url,published_at}]
+  products: [],  // [{id,name,description,author,repo,asset,discovered,installed_version,is_installed,latest_version,has_update,has_asset,status,changelog,commits,release_url,published_at,hidden}]
+  hidden: [],    // скрытые пользователем [{... , hidden:true}] — вкладка «Скрытые»
   sync: { fetching: false, fetched: 0, total: 0, failed: [], checked_at: 0, snapshot_saved_at: 0, first_scan: false },
   busy: null,    // { id, action, text } — длительная операция над карточкой
   toast: null,   // { kind: 'ok' | 'err' | 'info', text }
@@ -62,6 +63,7 @@ if (typeof window !== 'undefined') {
     state.ready = true
     state.version = payload.version || '—'
     state.products = payload.products || []
+    state.hidden = Array.isArray(payload.hidden) ? payload.hidden : []
     if (payload.sync && typeof payload.sync === 'object') {
       state.sync = {
         fetching: !!payload.sync.fetching,
@@ -246,10 +248,28 @@ export function confirmUninstall(id) {
 /** Скрыть найденное на GitHub расширение из каталога. */
 export function hide(repo) {
   if (isMock) {
-    state.products = state.products.filter(p => p.repo !== repo)
+    const idx = state.products.findIndex(p => p.repo === repo)
+    if (idx >= 0) {
+      const [item] = state.products.splice(idx, 1)
+      state.hidden.push({ ...item, hidden: true })
+    }
     return
   }
   callRubyJson('hide', { repo })
+}
+
+/** Вернуть одно скрытое расширение в каталог (вкладка «Скрытые»). */
+export function unhide(repo) {
+  if (isMock) {
+    const idx = state.hidden.findIndex(p => p.repo === repo)
+    if (idx >= 0) {
+      const [item] = state.hidden.splice(idx, 1)
+      const { hidden, ...rest } = item
+      state.products.push(rest)
+    }
+    return
+  }
+  callRubyJson('unhide', { repo })
 }
 
 /** Массовая установка/обновление: неустановленные + обновления. */

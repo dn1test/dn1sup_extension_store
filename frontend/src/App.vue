@@ -151,8 +151,8 @@
         class="flex flex-col items-center justify-center gap-1.5 py-16 text-slate-400 dark:text-slate-500"
       >
         <SearchX :size="28" />
-        <span class="text-sm font-semibold text-slate-500 dark:text-slate-300">Ничего не найдено</span>
-        <span class="text-xs">Попробуйте изменить поисковый запрос или фильтр</span>
+        <span class="text-sm font-semibold text-slate-500 dark:text-slate-300">{{ emptyTitle }}</span>
+        <span class="text-xs">{{ emptyHint }}</span>
       </div>
     </main>
 
@@ -307,7 +307,8 @@ const searchQuery = ref('')
 const counts = computed(() => ({
   all: state.products.length,
   installed: state.products.filter(p => p.is_installed).length,
-  updates: state.products.filter(p => p.has_update || p.status === 'switch').length
+  updates: state.products.filter(p => p.has_update || p.status === 'switch').length,
+  hidden: state.hidden.length
 }))
 
 const bulkBusy = computed(() => !!(state.busy && state.busy.id === '__bulk__'))
@@ -341,7 +342,8 @@ function onUninstallAll() {
 
 const filteredProducts = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return state.products.filter(p => {
+  const source = filter.value === 'hidden' ? state.hidden : state.products
+  return source.filter(p => {
     if (filter.value === 'installed' && !p.is_installed) return false
     if (filter.value === 'updates' && !(p.has_update || p.status === 'switch')) return false
     if (q) {
@@ -353,6 +355,15 @@ const filteredProducts = computed(() => {
     return true
   })
 })
+
+const emptyTitle = computed(() =>
+  filter.value === 'hidden' ? 'Нет скрытых расширений' : 'Ничего не найдено'
+)
+const emptyHint = computed(() =>
+  filter.value === 'hidden'
+    ? 'Скрытые кнопкой «глаз» расширения появятся здесь, вернуть — кнопкой «глаз» на карточке'
+    : 'Попробуйте изменить поисковый запрос или фильтр'
+)
 
 onMounted(() => {
   armLoadTimeout()

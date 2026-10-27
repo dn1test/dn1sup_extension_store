@@ -140,13 +140,23 @@
           </button>
 
           <button
-            v-if="p.discovered"
+            v-if="p.discovered && !p.hidden"
             class="p-1.5 rounded-lg h-[30px] w-[30px] flex items-center justify-center
                    text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            title="Скрыть это расширение из каталога (вернуть: меню DN1Sup → Extension Store → Показать скрытые расширения)"
+            title="Скрыть это расширение из каталога (вернуть: вкладка «Скрытые» или меню DN1Sup → Extension Store → Показать скрытые расширения)"
             @click="hide(p.repo)"
           >
             <EyeOff :size="14" />
+          </button>
+
+          <button
+            v-if="p.hidden"
+            class="p-1.5 rounded-lg h-[30px] w-[30px] flex items-center justify-center
+                   text-brand-500 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950/40 transition-colors"
+            title="Вернуть расширение в каталог"
+            @click="unhide(p.repo)"
+          >
+            <Eye :size="14" />
           </button>
         </template>
       </div>
@@ -184,9 +194,9 @@
 <script setup>
 import { computed, ref } from 'vue'
 import {
-  ChevronDown, Loader2, Zap, RotateCw, Download, Trash2, ArrowLeftRight, Sparkles, EyeOff, User
+  ChevronDown, Loader2, Zap, RotateCw, Download, Trash2, ArrowLeftRight, Sparkles, EyeOff, Eye, User
 } from 'lucide-vue-next'
-import { state, install, update, checkUpdate, confirmUninstall, hide } from '../composables/useSketchupBridge'
+import { state, install, update, checkUpdate, confirmUninstall, hide, unhide } from '../composables/useSketchupBridge'
 import { useProductStatus } from '../composables/useProductStatus'
 import { productIcon, productIconClass, productIconUrl } from '../composables/useProductIcon'
 

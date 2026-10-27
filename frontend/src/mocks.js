@@ -78,9 +78,32 @@ export function mockPayload() {
   return {
     version: '0.5.0-mock',
     products: mockProducts,
+    hidden: mockHidden,
     sync: { fetching: false, fetched: mockProducts.length, total: mockProducts.length, failed: [], checked_at: Date.now() / 1000 | 0, snapshot_saved_at: 0, first_scan: false }
   }
 }
+
+let mockHidden = [
+  {
+    id: 'demo_hidden_one',
+    name: 'Demo Hidden One',
+    description: 'Демо скрытого расширения для вкладки «Скрытые» (кнопка «глаз» возвращает в каталог).',
+    author: 'DN1Sup Demo',
+    repo: 'example/demo-hidden-one',
+    asset: 'demo_hidden_one.rbz',
+    discovered: true,
+    hidden: true,
+    installed_version: '',
+    is_installed: false,
+    latest_version: '0.2.0',
+    has_update: false,
+    status: '',
+    changelog: 'Демо скрытого: первая строка.',
+    commits: [],
+    release_url: 'https://example.com/demo-hidden-one/releases',
+    published_at: ''
+  }
+]
 
 function findProduct(id) {
   return mockProducts.find(p => p.id === id)
