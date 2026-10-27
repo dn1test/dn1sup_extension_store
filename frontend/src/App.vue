@@ -8,7 +8,6 @@
       :counts="counts"
       v-model:view="view"
       @refresh="onRefresh"
-      @restart="onRestart"
       @update:filter="filter = $event"
     />
 
@@ -200,7 +199,7 @@ import { Search, SearchX, Loader2, Hourglass, RotateCw, CheckCircle2, AlertCircl
 import Header from './components/Header.vue'
 import ProductCard from './components/ProductCard.vue'
 import ProductRow from './components/ProductRow.vue'
-import { state, refresh, loadState, toast, installAll, confirmUninstallAll, confirmRestart } from './composables/useSketchupBridge'
+import { state, refresh, loadState, toast, installAll, confirmUninstallAll } from './composables/useSketchupBridge'
 import { useTheme } from './composables/useTheme'
 
 useTheme()
@@ -298,10 +297,6 @@ function onRefresh() {
   refreshing.value = true
   refresh()
   setTimeout(() => { refreshing.value = false }, 1200)
-}
-
-function onRestart() {
-  confirmRestart()
 }
 
 // -- фильтры и поиск -------------------------------------------------------------

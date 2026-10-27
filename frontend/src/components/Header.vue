@@ -36,13 +36,6 @@
       </button>
       <button
         class="p-1.5 rounded-lg text-slate-400 hover:text-brand-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-        title="Перезапустить SketchUp с тем же файлом"
-        @click="$emit('restart')"
-      >
-        <Power class="w-4 h-4" />
-      </button>
-      <button
-        class="p-1.5 rounded-lg text-slate-400 hover:text-brand-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         :title="isDark ? 'Светлая тема' : 'Тёмная тема'"
         @click="toggleTheme"
       >
@@ -76,7 +69,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { RotateCw, Sun, Moon, Rows3, LayoutGrid, Power } from 'lucide-vue-next'
+import { RotateCw, Sun, Moon, Rows3, LayoutGrid } from 'lucide-vue-next'
 import { useTheme } from '../composables/useTheme'
 import storeTile from '../assets/products/dn1sup_extension_store.svg'
 
@@ -88,7 +81,7 @@ const props = defineProps({
   filter: { type: String, default: 'all' },
   counts: { type: Object, default: () => ({ all: 0, installed: 0, updates: 0 }) }
 })
-defineEmits(['refresh', 'restart', 'update:view', 'update:filter'])
+defineEmits(['refresh', 'update:view', 'update:filter'])
 
 const { isDark, toggleTheme } = useTheme()
 
