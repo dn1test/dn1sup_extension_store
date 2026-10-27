@@ -6,6 +6,20 @@
 Изменения остальных расширений DN1Sup документируются в их собственных
 репозиториях (`dn1test/dn1sup_*`).
 
+## [0.32.0] — 2026-10-27
+
+### DN1Sup Extension Store (v0.32.0)
+- **Удалена функция перезапуска SketchUp.** Убраны кнопка Power в шапке
+  каталога, команды `confirm_restart` / `restart` и весь Ruby-код рестарта
+  (`perform_restart`, поиск `SketchUp.exe`, PowerShell-наблюдатель,
+  диалог сохранения новой сцены).
+- **Иконки тулбара для SketchUp 2024** — плоский стиль без масок,
+  `fill-opacity` и `fill-rule` (старый evenodd-knockout SU2024 заливал
+  сплошным цветом): сплошные заливки + белые детали, прозрачный фон.
+  Источник знаков — `icons/products/` (`tools/make_icons.rb` → `sign_svg`);
+  раздача по репозиториям — `tools/apply_icons.rb` (обновлён PLAN:
+  версии, PNG 16/24, новая запись su2vis, зеркало `web/package.json`).
+
 ## [0.31.0] — 2026-10-27
 
 ### DN1Sup Extension Store (v0.31.0) — каталог без готового списка

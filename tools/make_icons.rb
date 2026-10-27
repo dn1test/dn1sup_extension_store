@@ -267,86 +267,40 @@ def tile_svg(color, ops)
   SVG
 end
 
-# Знак тулбара: без плитки, вырезы — настоящая прозрачность.
-# БЕЗ <mask>: рендерер SVG в SketchUp 2024 маски игнорирует и рисует
-# сплошной квадрат (инцидент 2026-10-26). Вместо маски — knockout-композит:
-# фигуры группируются в слои по opacity (порядок ops сохраняется), каждый
-# слой — один compound path с fill-rule="evenodd".
-# Вырез попадает в слой, только если целиком лежит внутри тел слоя
-# (bbox + центроид): иначе evenodd ЗАЛИЛ бы его там, где он вне тел.
-# Это точно повторяет математику маски для наших данных: вырезы всегда
-# внутри хотя бы одного тела, частично выступающих нет (аудит 2026-10-26).
-def op_bbox(op)
-  case op[0]
-  when :rect
-    [op[1].to_f, op[2].to_f, op[1].to_f + op[3].to_f, op[2].to_f + op[4].to_f]
-  when :circle
-    [op[1].to_f - op[3].to_f, op[2].to_f - op[3].to_f,
-     op[1].to_f + op[3].to_f, op[2].to_f + op[3].to_f]
-  when :poly
-    xs = op[1].map(&:first)
-    ys = op[1].map(&:last)
-    [xs.min.to_f, ys.min.to_f, xs.max.to_f, ys.max.to_f]
-  when :line
-    r = op[5].to_f / 2.0
-    [[op[1].to_f, op[3].to_f].min - r, [op[2].to_f, op[4].to_f].min - r,
-     [op[1].to_f, op[3].to_f].max + r, [op[2].to_f, op[4].to_f].max + r]
-  end
+# Знак тулбара: без плитки, только сплошные заливки — БЕЗ opacity,
+# fill-rule, <mask>, клипов, градиентов и штрихов: рендерер SVG тулбаров
+# SketchUp 2024 на Windows их игнорирует и рисует сплошную плашку
+# (инцидент 2026-10-26 с <mask>; инцидент 2026-10-27: evenodd-knockout
+# и fill-opacity тоже заливаются). Полупрозрачность :sign имитируется
+# осветлением цвета (смешивание с белым), вырезы :hole рисуются
+# отдельными фигурами поверх тел белым — белый виден на всех фирменных
+# цветах и на осветлённых «призраках». Штрихи :line запекаются в контур
+# (капсула) через op_path_d, как и раньше.
+def mix_with_white(hex, opacity)
+  r, g, b = hex_rgb(hex)
+  w = 1.0 - opacity.to_f
+  format('#%02x%02x%02x', *[r, g, b].map { |c| (c + (255 - c) * w).round.clamp(0, 255) })
 end
 
-def hole_centroid(op)
+def flat_shape_svg(op, fill)
   case op[0]
   when :rect
-    [op[1].to_f + op[3].to_f / 2.0, op[2].to_f + op[4].to_f / 2.0]
+    rxa = op[5].to_f > 0 ? " rx=\"#{fn(op[5])}\"" : ''
+    "<rect x=\"#{fn(op[1])}\" y=\"#{fn(op[2])}\" width=\"#{fn(op[3])}\" height=\"#{fn(op[4])}\"#{rxa} fill=\"#{fill}\"/>"
   when :circle
-    [op[1].to_f, op[2].to_f]
-  when :poly
-    n = op[1].length.to_f
-    [op[1].sum(&:first) / n, op[1].sum(&:last) / n]
-  when :line
-    [(op[1].to_f + op[3].to_f) / 2.0, (op[2].to_f + op[4].to_f) / 2.0]
-  end
-end
-
-def point_in_body?(op, x, y)
-  case op[0]
-  when :rect
-    x0, y0 = op[1].to_f, op[2].to_f
-    x > x0 && x < x0 + op[3].to_f && y > y0 && y < y0 + op[4].to_f
-  when :circle
-    ((x - op[1].to_f)**2 + (y - op[2].to_f)**2) < op[3].to_f**2
-  when :poly
-    in_poly?(op[1], x, y)
-  else
-    raise "point_in_body? не умеет #{op[0]}"
+    "<circle cx=\"#{fn(op[1])}\" cy=\"#{fn(op[2])}\" r=\"#{fn(op[3])}\" fill=\"#{fill}\"/>"
+  when :poly, :line
+    "<path d=\"#{op_path_d(op)}\" fill=\"#{fill}\"/>"
   end
 end
 
 def sign_svg(color, ops)
-  bodies = ops.select { |op| op_role(op) == :sign }
-  holes = ops.select { |op| op_role(op) == :hole }
-  owned = {}
-  layers = bodies.map { |op| op_opacity(op) }.uniq.map do |opac|
-    group = bodies.select { |op| op_opacity(op) == opac }
-    ux0 = group.map { |op| op_bbox(op)[0] }.min
-    uy0 = group.map { |op| op_bbox(op)[1] }.min
-    ux1 = group.map { |op| op_bbox(op)[2] }.max
-    uy1 = group.map { |op| op_bbox(op)[3] }.max
-    mine = holes.select do |h|
-      hx0, hy0, hx1, hy1 = op_bbox(h)
-      next false unless hx0 >= ux0 && hy0 >= uy0 && hx1 <= ux1 && hy1 <= uy1
-      cx, cy = hole_centroid(h)
-      group.any? { |b| point_in_body?(b, cx, cy) }
-    end
-    mine.each { |h| owned[h] = true }
-    { opac: opac, d: (group + mine).map { |op| op_path_d(op) }.join }
+  shapes = ops.select { |op| op_role(op) == :sign }.map do |op|
+    o = op_opacity(op)
+    flat_shape_svg(op, o < 1.0 ? mix_with_white(color, o) : color)
   end
-  orphans = holes.reject { |h| owned[h] }
-  raise "вырез без слоя (не внутри тел): #{orphans.inspect}" unless orphans.empty?
-  shapes = layers.map do |l|
-    extra = l[:opac] < 1.0 ? format(' fill-opacity="%.2f"', l[:opac]).sub(/0+$/, '').sub(/\.$/, '') : ''
-    "<path d=\"#{l[:d]}\" fill=\"#{color}\"#{extra} fill-rule=\"evenodd\"/>"
-  end.join
+  shapes += ops.select { |op| op_role(op) == :hole }.map { |op| flat_shape_svg(op, '#ffffff') }
+  shapes = shapes.join
   <<~SVG
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
     #{shapes}</svg>
