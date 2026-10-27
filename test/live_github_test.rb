@@ -70,13 +70,14 @@ def file_loaded(_); true; end
 require_relative '../shared/dn1sup_updater'
 require_relative '../src/dn1sup_extension_store/main'
 
-# 1. Реестр каталога на GitHub (первичный список расширений)
-raw_reg = Dn1sup::Updater.fetch_text("https://raw.githubusercontent.com/#{REPO}/main/registry.json")
-assert 'registry.json доступен по raw-ссылке', !raw_reg.to_s.empty?
-reg_data = JSON.parse(raw_reg) rescue []
-assert "registry.json содержит #{CATALOG_IDS.size} расширений", reg_data.is_a?(Array) && reg_data.size >= CATALOG_IDS.size - 1, "#{reg_data.size} записей"
-assert 'registry.json покрывает весь каталог',
-       CATALOG_IDS.all? { |id| reg_data.any? { |e| e.is_a?(Hash) && e['id'] == id } }
+# 1. Центрального registry.json больше нет: каталог строится запросом
+# к GitHub. Собственная запись Store — из кода, остальные — автопоиск
+# + per-repo манифесты.
+self_e = Dn1sup::ExtensionStore.self_entry
+assert 'self_entry менеджера из кода', self_e['id'] == 'dn1sup_extension_store' && self_e['repo'] == REPO
+assert 'центрального registry.json нет (каталог — запросом к GitHub)',
+       Dn1sup::Updater.fetch_text("https://raw.githubusercontent.com/#{REPO}/main/registry.json").to_s.empty?
+assert 'load_registry удалён (готового списка нет)', !Dn1sup::ExtensionStore.respond_to?(:load_registry)
 
 # 2. Релиз менеджера и постоянная ссылка на скачивание
 release = Dn1sup::Updater.latest_release(REPO)
@@ -88,8 +89,8 @@ assert 'скачивание менеджера успешно', saved && File.f
 assert 'файл менеджера — валидный .rbz', Dn1sup::Updater.rbz?(saved)
 File.delete(saved) if saved && File.file?(saved)
 
-# 3. Автопоиск: репозитории аккаунта и их метаданные (по одному raw-запросу
-# на репозиторий — так каталог достраивает карточки вне реестра)
+# 3. Автопоиск: репозитории аккаунта и их метаданные (per-repo манифест —
+# так каталог строит карточки запросом к GitHub)
 owner_repos = Dn1sup::Updater.repos_of_owner(OWNER)
 assert 'repos_of_owner находит репозитории аккаунта', owner_repos.is_a?(Array) && owner_repos.any?, "#{owner_repos.size} репозиториев"
 full_names = owner_repos.map { |r| r['full_name'].to_s }
@@ -143,9 +144,13 @@ else
   assert 'compare_commits: у репозитория есть минимум 2 тега', false, tags.join(', ')
 end
 
-# 7. ExtensionStore::load_registry
-loaded_reg = Dn1sup::ExtensionStore.load_registry
-assert 'ExtensionStore успешно загружает реестр', loaded_reg.is_a?(Array) && loaded_reg.size >= CATALOG_IDS.size - 1
+# 7. ExtensionStore: каталог собирается из автопоиска + релизов
+found = Dn1sup::ExtensionStore.discover_repos
+Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, found)
+merged = Dn1sup::ExtensionStore.merged_entries
+assert 'каталог содержит Store', merged.any? { |e| e['id'] == 'dn1sup_extension_store' }
+assert 'автопоиск покрывает каталог',
+       CATALOG_IDS.all? { |id| merged.any? { |e| e['id'] == id } }, merged.map { |e| e['id'] }.join(', ')
 
 puts "\n#{$failed.zero? ? 'ВСЕ ЖИВЫЕ ТЕСТЫ С GITHUB УСПЕШНО ПРОЙДЕНЫ!' : "#{$failed} ТЕСТОВ ПРОВАЛЕНО"}"
 exit($failed.zero? ? 0 : 1)

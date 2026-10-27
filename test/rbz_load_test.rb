@@ -142,14 +142,16 @@ end
 
 # --- Ожидания по пакетам ------------------------------------------------------
 
-# Версия сверяется с registry.json (tools/pack.rb обновляет его из лоадера),
+# Версия сверяется с лоадером (tools/pack.rb извлекает её оттуда же),
 # чтобы тест не приходилось править при каждом релизе.
 require 'json'
-REGISTRY_VERSIONS = JSON.parse(File.read(File.expand_path('../registry.json', __dir__)))
-                         .each_with_object({}) { |e, h| h[e['id']] = e['version'] }
+STORE_VERSION = begin
+  loader_src = File.read(File.expand_path('../src/dn1sup_extension_store.rb', __dir__))
+  loader_src[/extension\.version\s*=\s*['"]([^'"]+)['"]/, 1]
+end
 
 EXPECTED = {
-  'dn1sup_extension_store' => ['Dn1sup::ExtensionStore::VERSION', REGISTRY_VERSIONS['dn1sup_extension_store']]
+  'dn1sup_extension_store' => ['Dn1sup::ExtensionStore::VERSION', STORE_VERSION]
 }.freeze
 
 def const_value(path)

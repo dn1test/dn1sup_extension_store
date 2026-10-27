@@ -253,7 +253,7 @@ export function confirmUninstall(id) {
   callRubyJson('confirm_uninstall', { id })
 }
 
-/** Скрыть найденное на GitHub расширение (не входит в registry.json). */
+/** Скрыть найденное на GitHub расширение из каталога. */
 export function hide(repo) {
   if (isMock) {
     state.products = state.products.filter(p => p.repo !== repo)

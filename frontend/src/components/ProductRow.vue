@@ -30,7 +30,7 @@
           v-if="p.discovered"
           class="inline-flex items-center gap-1 px-1.5 py-px rounded-full text-[11px] font-medium whitespace-nowrap shrink-0
                  bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300"
-          title="Расширение найдено автоматически на GitHub — его нет в основном реестре каталога"
+          title="Расширение найдено автоматически на GitHub"
         >
           <Sparkles :size="11" />
           Найдено

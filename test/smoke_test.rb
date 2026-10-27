@@ -187,15 +187,26 @@ end
 assert 'check! вернул summary', summary.is_a?(Hash) && summary[:latest] == rel['tag_name'], summary.inspect
 assert 'check! записал метку времени', Sketchup.read_default('Dn1supUpdater', 'last_test').is_a?(Integer)
 
-# 5b. registry_entry: per-extension версия из registry.json
-repo_for_reg = 'dn1test/dn1sup_extension_store'
-reg_entry = Dn1sup::Updater.registry_entry(repo_for_reg, 'dn1sup_time_project')
-if reg_entry.nil?
-  local_reg = JSON.parse(File.read(File.expand_path('../registry.json', __dir__)))
-  reg_entry = Dn1sup::Updater.find_registry_entry(local_reg, 'dn1sup_time_project')
+# 5b. registry_entry: per-extension версия из per-repo манифеста (стаб сети)
+orig_fetch_text = Dn1sup::Updater.method(:fetch_text)
+Dn1sup::Updater.define_singleton_method(:fetch_text) do |url|
+  if url.to_s.include?('dn1sup_time_project')
+    JSON.generate([{ 'id' => 'dn1sup_time_project', 'name' => 'DN1Sup Time Project',
+                     'repo' => 'dn1test/dn1sup_time_project', 'version' => '0.5.0' }])
+  else
+    '[]'
+  end
 end
-assert 'registry_entry находит расширение', reg_entry.is_a?(Hash) && !reg_entry['repo'].to_s.empty?, reg_entry.inspect
-assert 'registry_entry для чужого id — nil', Dn1sup::Updater.registry_entry(repo_for_reg, 'no_such_ext').nil?
+begin
+  reg_entry = Dn1sup::Updater.registry_entry('dn1test/dn1sup_time_project', 'dn1sup_time_project')
+  assert 'registry_entry находит расширение в per-repo манифесте',
+         reg_entry.is_a?(Hash) && reg_entry['version'].to_s == '0.5.0', reg_entry.inspect
+  assert 'registry_entry для чужого id — nil',
+         Dn1sup::Updater.registry_entry('dn1test/dn1sup_time_project', 'no_such_ext').nil?
+ensure
+  Dn1sup::Updater.define_singleton_method(:fetch_text, orig_fetch_text)
+  Dn1sup::Updater.instance_variable_set(:@registry_cache, {})
+end
 
 # 6. fetch_text с raw.githubusercontent.com
 ok = !Dn1sup::Updater.fetch_text('https://raw.githubusercontent.com/SketchUp/rubocop-sketchup/master/README.md').to_s.empty?
@@ -293,13 +304,16 @@ assert 'latest_changelog_section: пустой ввод — пустая сек�
        Dn1sup::ExtensionStore.latest_changelog_section('').empty? &&
        Dn1sup::ExtensionStore.latest_changelog_section(nil).empty?
 
-# 12. Проверка мгновенного сбора каталога без сети (offline mode)
+# 12. Проверка мгновенного сбора каталога без сети (offline mode):
+# собственная запись Store всегда в каталоге, остальные — из найденного
+# на GitHub и установленных в Plugins
 offline_products = Dn1sup::ExtensionStore.collect_products_data(false, check_releases: false)
-assert 'collect_products_data offline возвращает все расширения из реестра', offline_products.size == Dn1sup::ExtensionStore.load_registry.size
-assert 'collect_products_data offline содержит id dn1sup_extension_store', offline_products.any? { |p| p['id'] == 'dn1sup_extension_store' }
-assert 'collect_products_data offline содержит id dn1sup_comp_add_view', offline_products.any? { |p| p['id'] == 'dn1sup_comp_add_view' }
-assert 'collect_products_data offline содержит id dn1sup_create_project', offline_products.any? { |p| p['id'] == 'dn1sup_create_project' }
-assert 'collect_products_data offline содержит id dn1sup_save_settings', offline_products.any? { |p| p['id'] == 'dn1sup_save_settings' }
+assert 'collect_products_data offline показывает Store', offline_products.any? { |p| p['id'] == 'dn1sup_extension_store' }
+mgr_card = offline_products.find { |p| p['id'] == 'dn1sup_extension_store' }
+assert 'карточка Store офлайн: версия из кода', !!mgr_card && mgr_card['latest_version'] == Dn1sup::ExtensionStore::VERSION,
+       mgr_card && mgr_card.slice('latest_version', 'is_installed').inspect
+assert 'каждая карточка имеет id и repo',
+       offline_products.all? { |p| !p['id'].to_s.empty? && !p['repo'].to_s.empty? }
 
 # 13. Протокол диалога: dispatch (единый колбэк call_ruby -> pushState/pushResult)
 class FakeStoreDialog
@@ -325,7 +339,7 @@ UI.define_singleton_method(:stop_timer)  { |_timer| true }
 
 begin
   # Предзаполняем кэш релизов: pushState уйдёт офлайн, без сетевых запросов
-  entries = Dn1sup::ExtensionStore.load_registry
+  entries = Dn1sup::ExtensionStore.merged_entries
   Dn1sup::ExtensionStore.instance_variable_set(
     :@release_cache,
     entries.each_with_object({}) { |e, h| h[e['repo'].to_s] = { 'tag_name' => 'v9.9.9' } }
@@ -490,10 +504,20 @@ end
 
 begin
   # --- apply_repo_status и фильтрация карточек ----------------------------
-  Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, [discovered_fixture[0].dup])
+  # Установленное save_settings «переехало» в новый репозиторий: в каталоге
+  # уже есть запись под новым именем (её принёс бы автопоиск), старая —
+  # помечена переименованной.
+  Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, [
+    discovered_fixture[0].dup,
+    { 'id' => 'dn1sup_save_settings', 'name' => 'DN1Sup Save Settings',
+      'description' => 'настройки', 'repo' => 'dn1test/dn1sup_save_settings_new', 'discovered' => true }
+  ])
   Dn1sup::ExtensionStore.instance_variable_set(
     :@releases_cache,
-    { 'dn1test/dn1sup_dummy_found' => [{ 'tag_name' => 'v0.1.0', 'published_at' => '2026-10-01T00:00:00Z', 'assets' => [] }] }
+    {
+      'dn1test/dn1sup_dummy_found' => [{ 'tag_name' => 'v0.1.0', 'published_at' => '2026-10-01T00:00:00Z', 'assets' => [] }],
+      'dn1test/dn1sup_save_settings_new' => [{ 'tag_name' => 'v1.0.0', 'published_at' => '2026-10-01T00:00:00Z', 'assets' => [] }]
+    }
   )
   # save_settings считаем установленным: карточка с мёртвым репо должна
   # остаться в каталоге с пометкой
@@ -524,14 +548,15 @@ begin
   products = Dn1sup::ExtensionStore.collect_products_data(false, check_releases: false)
   assert 'collect: неустановленное с мёртвым репо скрыто', products.none? { |p| p['id'] == 'dn1sup_dummy_found' }
   ss = products.find { |p| p['id'] == 'dn1sup_save_settings' }
-  assert 'collect: установленное с переименованным репо осталось с пометкой',
-         !!ss && ss['repo_status'] == 'renamed' && ss['is_installed'] == true && ss['has_update'] == false,
-         ss&.slice('repo_status', 'has_update').inspect
+  assert 'collect: установленное с переименованным репо осталось под новым именем',
+         !!ss && ss['repo'] == 'dn1test/dn1sup_save_settings_new' &&
+         ss['repo_status'].to_s.empty? && ss['is_installed'] == true && ss['has_update'] == false,
+         ss&.slice('repo', 'repo_status', 'has_update').inspect
   em = products.find { |p| p['id'] == 'dn1sup_extension_store' }
   assert 'collect: живое расширение без пометки', !!em && em['repo_status'].to_s.empty?
 
-  res = Dn1sup::ExtensionStore.perform_install('dn1sup_save_settings')
-  assert 'install: мёртвый репо отклонён без сети', res['ok'] == false && res['error'].to_s.include?('недоступен'), res.inspect
+  res = Dn1sup::ExtensionStore.perform_install('dn1sup_dummy_found')
+  assert 'install: неизвестный id отклонён без сети', res['ok'] == false && res['error'].to_s.include?('не найдено'), res.inspect
 
   Dn1sup::ExtensionStore.apply_repo_status(
     'dn1test/dn1sup_save_settings' => { exists: true, repo: 'dn1test/dn1sup_save_settings', renamed: false }
@@ -547,40 +572,38 @@ ensure
 end
 
 begin
-  # --- снапшот v5: статусы репозиториев и каталог переживают перезапуск ----
+  # --- снапшот v6: статусы репозиториев и найденное переживают перезапуск --
+  # (готового списка в расширении нет — только releases/discovered/commits/stale)
   Dn1sup::ExtensionStore.instance_variable_set(
     :@stale_repos,
     { 'dn1test/dn1sup_dummy_found' => { 'status' => 'gone', 'renamed_to' => '', 'checked_at' => 1_700_000_000 } }
   )
-  Dn1sup::ExtensionStore.instance_variable_set(
-    :@remote_registry,
-    [{ 'id' => 'dn1sup_dummy_remote', 'name' => 'Remote', 'description' => 'свежее с GitHub',
-       'repo' => 'dn1test/dn1sup_dummy_remote', 'version' => '1.2.0' }]
-  )
-  Dn1sup::ExtensionStore.instance_variable_set(
-    :@registry_meta_cache,
-    { 'dn1sup_save_settings' => { 'data' => { 'id' => 'dn1sup_save_settings', 'repo' => 'dn1test/dn1sup_save_settings',
-                                              'description' => 'свежее описание из репозитория' }, 'at' => 1_700_000_001 } }
-  )
   Dn1sup::ExtensionStore.save_release_snapshot
   data = JSON.parse(File.read(Dn1sup::ExtensionStore.snapshot_path))
-  assert 'снапшот v5: версия, stale и каталог',
-         data['version'] == 5 && data['stale'].is_a?(Hash) &&
+  assert 'снапшот v6: версия, stale, без полей центрального списка',
+         data['version'] == 6 && data['stale'].is_a?(Hash) &&
          data['stale']['dn1test/dn1sup_dummy_found']['status'] == 'gone' &&
-         data['remote_registry'].is_a?(Array) && data['registry_meta'].is_a?(Hash), "version=#{data['version']}"
+         !data.key?('remote_registry') && !data.key?('registry_meta'), "version=#{data['version']}"
 
   Dn1sup::ExtensionStore.instance_variable_set(:@stale_repos, {})
   Dn1sup::ExtensionStore.instance_variable_set(:@release_cache, {})
   Dn1sup::ExtensionStore.instance_variable_set(:@releases_cache, {})
-  Dn1sup::ExtensionStore.instance_variable_set(:@remote_registry, [])
-  Dn1sup::ExtensionStore.instance_variable_set(:@registry_meta_cache, {})
   Dn1sup::ExtensionStore.load_release_snapshot
-  assert 'снапшот v5: stale восстановлен',
+  assert 'снапшот v6: stale восстановлен',
          Dn1sup::ExtensionStore.instance_variable_get(:@stale_repos)['dn1test/dn1sup_dummy_found']['status'] == 'gone'
-  assert 'снапшот v5: remote_registry восстановлен',
-         Dn1sup::ExtensionStore.instance_variable_get(:@remote_registry).any? { |e| e['id'] == 'dn1sup_dummy_remote' }
-  assert 'снапшот v5: registry_meta восстановлен',
-         Dn1sup::ExtensionStore.instance_variable_get(:@registry_meta_cache)['dn1sup_save_settings']['data']['description'] == 'свежее описание из репозитория'
+
+  # Старый v5 с полями центрального списка читается, лишние поля игнорируются
+  data['remote_registry'] = [{ 'id' => 'dn1sup_dummy_remote', 'repo' => 'dn1test/dn1sup_dummy_remote' }]
+  data['registry_meta'] = { 'x' => { 'data' => { 'id' => 'x' }, 'at' => 1 } }
+  data['version'] = 5
+  File.write(Dn1sup::ExtensionStore.snapshot_path, JSON.generate(data))
+  Dn1sup::ExtensionStore.instance_variable_set(:@stale_repos, {})
+  Dn1sup::ExtensionStore.instance_variable_set(:@release_cache, {})
+  Dn1sup::ExtensionStore.instance_variable_set(:@releases_cache, {})
+  Dn1sup::ExtensionStore.load_release_snapshot
+  assert 'снапшот v5 читается, лишние поля каталога игнорируются',
+         Dn1sup::ExtensionStore.instance_variable_get(:@stale_repos)['dn1test/dn1sup_dummy_found']['status'] == 'gone' &&
+         Dn1sup::ExtensionStore.merged_entries.none? { |e| e['id'] == 'dn1sup_dummy_remote' }
 
   # Самовосстановление: discovered-запись мёртвого репозитория из снапшота
   # (например, записанная версией без stale-логики) не resurrect-ится.
@@ -613,20 +636,18 @@ begin
   assert 'снапшот: перезаписывается чистыми данными', clean['discovered'].size == 1
   data['discovered'] = []
 
-  # Старый формат v4 (без каталога) читается, каталог остаётся пустым
+  # Старый формат v4 (без лишних полей) читается
   data.delete('remote_registry')
   data.delete('registry_meta')
+  data['stale'] = { 'dn1test/dn1sup_dummy_found' => { 'status' => 'gone', 'renamed_to' => '', 'checked_at' => 1_700_000_000 } }
   data['version'] = 4
   File.write(Dn1sup::ExtensionStore.snapshot_path, JSON.generate(data))
   Dn1sup::ExtensionStore.instance_variable_set(:@stale_repos, {})
   Dn1sup::ExtensionStore.instance_variable_set(:@release_cache, {})
   Dn1sup::ExtensionStore.instance_variable_set(:@releases_cache, {})
-  Dn1sup::ExtensionStore.instance_variable_set(:@remote_registry, [])
-  Dn1sup::ExtensionStore.instance_variable_set(:@registry_meta_cache, {})
   Dn1sup::ExtensionStore.load_release_snapshot
-  assert 'снапшот v4 без каталога читается',
-         Dn1sup::ExtensionStore.instance_variable_get(:@remote_registry).is_a?(Array) &&
-         Dn1sup::ExtensionStore.instance_variable_get(:@registry_meta_cache).is_a?(Hash)
+  assert 'снапшот v4 читается',
+         Dn1sup::ExtensionStore.instance_variable_get(:@stale_repos)['dn1test/dn1sup_dummy_found']['status'] == 'gone'
 
   # Старый формат v3 (без stale) читается, stale остаётся пустым
   data.delete('stale')
@@ -645,52 +666,48 @@ ensure
   Dn1sup::ExtensionStore.instance_variable_set(:@releases_cache, {})
   Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, [])
   Dn1sup::ExtensionStore.instance_variable_set(:@commits_cache, {})
-  Dn1sup::ExtensionStore.instance_variable_set(:@remote_registry, [])
-  Dn1sup::ExtensionStore.instance_variable_set(:@registry_meta_cache, {})
-  Dn1sup::ExtensionStore.instance_variable_set(:@remote_registry_at, 0)
 end
 
-# 13d. Каталог обновляется с GitHub и для неустановленных расширений:
-# центральный реестр — основа, per-repo — дополнения поверх (офлайн).
+# 13d. Per-repo метаданные обновляются с GitHub поверх найденного
+# (и для неустановленных расширений), пустые поля данные не затирают (офлайн).
 begin
-  Dn1sup::ExtensionStore.instance_variable_set(:@remote_registry, [])
-  Dn1sup::ExtensionStore.instance_variable_set(:@registry_meta_cache, {})
-  Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, [])
-  Dn1sup::ExtensionStore.instance_variable_set(:@releases_cache, {})
+  Dn1sup::ExtensionStore.instance_variable_set(
+    :@discovered_entries,
+    [{ 'id' => 'dn1sup_save_settings', 'name' => 'DN1Sup Save Settings',
+       'description' => 'старое описание', 'repo' => 'dn1test/dn1sup_save_settings',
+       'discovered' => true }]
+  )
+  # Без известных релизов карточка неустановленного скрыта — подкладываем
+  # релиз, чтобы проверить сборку карточки из свежих данных каталога.
+  Dn1sup::ExtensionStore.instance_variable_set(
+    :@releases_cache,
+    'dn1test/dn1sup_save_settings' => [
+      { 'tag_name' => 'v1.0.0', 'published_at' => '2026-10-01T00:00:00Z',
+        'assets' => [{ 'name' => 'dn1sup_save_settings.rbz', 'browser_download_url' => 'https://example.com/x.rbz' }] }
+    ]
+  )
   Dn1sup::ExtensionStore.instance_variable_set(:@release_cache, {})
 
-  # Центральный remote добавляет новое расширение и обновляет описание.
-  Dn1sup::ExtensionStore.apply_registry_refresh(
-    [
-      { 'id' => 'dn1sup_new_from_github', 'name' => 'New From GitHub',
-        'description' => 'новое расширение из центрального реестра', 'repo' => 'dn1test/dn1sup_new_from_github' },
-      { 'id' => 'dn1sup_save_settings', 'repo' => 'dn1test/dn1sup_save_settings',
-        'description' => 'обновлённое центральное описание' }
-    ],
-    {}
-  )
+  # Найденное с GitHub входит в каталог без центрального списка.
   merged = Dn1sup::ExtensionStore.merged_entries
-  assert 'каталог: центральный remote добавляет запись',
-         merged.any? { |e| e['id'] == 'dn1sup_new_from_github' }
-  ss = merged.find { |e| e['id'] == 'dn1sup_save_settings' }
-  assert 'каталог: центральный remote обновляет описание неустановленного',
-         ss && ss['description'] == 'обновлённое центральное описание'
+  assert 'каталог без готового списка: Store всегда в каталоге',
+         merged.any? { |e| e['id'] == 'dn1sup_extension_store' }
+  assert 'каталог: найденное с GitHub входит в каталог',
+         merged.any? { |e| e['id'] == 'dn1sup_save_settings' }
 
-  # Per-repo дополнение точечно обновляет поверх центрального.
-  Dn1sup::ExtensionStore.apply_registry_refresh(
-    nil,
-    { 'dn1sup_save_settings' => { 'id' => 'dn1sup_save_settings', 'repo' => 'dn1test/dn1sup_save_settings',
-                                  'description' => 'свежее описание из репозитория расширения' } }
+  # Per-repo дополнение точечно обновляет описание.
+  Dn1sup::ExtensionStore.apply_discovered_meta(
+    'dn1sup_save_settings' => { 'id' => 'dn1sup_save_settings', 'repo' => 'dn1test/dn1sup_save_settings',
+                                'description' => 'свежее описание из репозитория расширения' }
   )
   ss2 = Dn1sup::ExtensionStore.merged_entries.find { |e| e['id'] == 'dn1sup_save_settings' }
-  assert 'каталог: per-repo дополняет центральный',
+  assert 'каталог: per-repo метаданные обновляют запись',
          ss2 && ss2['description'] == 'свежее описание из репозитория расширения'
 
-  # Пустые поля per-repo bundled/центральные данные не затирают.
-  Dn1sup::ExtensionStore.apply_registry_refresh(
-    nil,
-    { 'dn1sup_save_settings' => { 'id' => 'dn1sup_save_settings', 'repo' => 'dn1test/dn1sup_save_settings',
-                                  'description' => '', 'name' => '' } }
+  # Пустые поля per-repo данные не затирают.
+  Dn1sup::ExtensionStore.apply_discovered_meta(
+    'dn1sup_save_settings' => { 'id' => 'dn1sup_save_settings', 'repo' => 'dn1test/dn1sup_save_settings',
+                                'description' => '', 'name' => '' }
   )
   ss3 = Dn1sup::ExtensionStore.merged_entries.find { |e| e['id'] == 'dn1sup_save_settings' }
   assert 'каталог: пустые per-repo поля не затирают данные',
@@ -703,9 +720,6 @@ begin
          !!card && card['is_installed'] == false &&
          card['description'] == 'свежее описание из репозитория расширения', card&.slice('description', 'is_installed').inspect
 ensure
-  Dn1sup::ExtensionStore.instance_variable_set(:@remote_registry, [])
-  Dn1sup::ExtensionStore.instance_variable_set(:@registry_meta_cache, {})
-  Dn1sup::ExtensionStore.instance_variable_set(:@remote_registry_at, 0)
   Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, [])
   Dn1sup::ExtensionStore.instance_variable_set(:@release_cache, {})
   Dn1sup::ExtensionStore.instance_variable_set(:@releases_cache, {})
@@ -882,23 +896,27 @@ assert 'compare_commits: непустые строки', cmts.all? { |m| m.is_a?
 assert 'compare_commits: несуществующие теги -> []',
        Dn1sup::Updater.compare_commits('dn1test/dn1sup_time_project', 'v9.9.9', 'v0.0.1') == []
 
-# 20. Реестр без дубликатов + установка/обновление (один id, без dev-двойников)
+# 20. Каталог без готового списка (один id, без dev-двойников) + установка/обновление
 # (офлайн: сеть подменяется стабами)
 begin
-  reg = Dn1sup::ExtensionStore.load_registry
-  ids = reg.map { |e| e['id'].to_s }
-  repos = reg.map { |e| e['repo'].to_s }
-  assert 'реестр: id уникальны', ids.uniq.size == ids.size, ids.inspect
-  assert 'реестр: repo уникальны', repos.uniq.size == repos.size, repos.inspect
-  assert 'реестр: покрывает все расширения dn1test',
-         %w[dn1sup_extension_store dn1sup_time_project dn1sup_create_project
-            dn1sup_autoselect_tag dn1sup_comp_add_view dn1sup_save_settings
-            dn1sup_export_3d dn1sup_export_pdf2 dn1sup_sketchup_profiles].all? { |id| ids.include?(id) },
-         ids.inspect
-  assert 'реестр: без _dev записей', ids.none? { |id| id.end_with?('_dev') }
-  mgr = reg.find { |e| e['id'] == 'dn1sup_extension_store' }
-  assert 'реестр: версия менеджера совпадает с лоадером',
-         mgr && mgr['version'].to_s == Dn1sup::ExtensionStore::VERSION, mgr && mgr['version'].inspect
+  self_e = Dn1sup::ExtensionStore.self_entry
+  assert 'self_entry: id/repo/version из кода',
+         self_e['id'] == 'dn1sup_extension_store' &&
+         self_e['repo'] == 'dn1test/dn1sup_extension_store' &&
+         self_e['version'].to_s == Dn1sup::ExtensionStore::VERSION, self_e.inspect
+  merged_all = Dn1sup::ExtensionStore.merged_entries
+  ids = merged_all.map { |e| e['id'].to_s }
+  repos = merged_all.map { |e| e['repo'].to_s }
+  assert 'каталог без готового списка: Store всегда в каталоге', ids.include?('dn1sup_extension_store')
+  assert 'каталог: id уникальны', ids.uniq.size == ids.size, ids.inspect
+  assert 'каталог: repo уникальны', repos.uniq.size == repos.size, repos.inspect
+  assert 'каталог: без _dev записей', ids.none? { |id| id.end_with?('_dev') }
+
+  Dn1sup::ExtensionStore.instance_variable_set(
+    :@discovered_entries,
+    [{ 'id' => 'dn1sup_save_settings', 'name' => 'DN1Sup Save Settings',
+       'description' => 'настройки', 'repo' => 'dn1test/dn1sup_save_settings', 'discovered' => true }]
+  )
 
   fake_release = {
     'tag_name' => 'v9.9.9',
@@ -920,6 +938,7 @@ ensure
   Dn1sup::Updater.define_singleton_method(:latest_release, orig_latest)
   Dn1sup::Updater.define_singleton_method(:install_from_url, orig_install)
   Sketchup.write_default('DN1Sup ExtensionStore', 'installed_dn1sup_save_settings', nil)
+  Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, [])
 end
 
 # 21. dev_source?: self-update отключён для рабочей копии (один id + reload)
@@ -957,6 +976,11 @@ begin
   Dn1sup::ExtensionStore.instance_variable_set(:@release_cache, {})
 
   # has_asset: релиз без .rbz помечается для UI
+  Dn1sup::ExtensionStore.instance_variable_set(
+    :@discovered_entries,
+    [{ 'id' => 'dn1sup_save_settings', 'name' => 'DN1Sup Save Settings',
+       'description' => 'настройки', 'repo' => 'dn1test/dn1sup_save_settings', 'discovered' => true }]
+  )
   Dn1sup::ExtensionStore.instance_variable_set(
     :@releases_cache,
     'dn1test/dn1sup_save_settings' => [
@@ -1015,6 +1039,7 @@ begin
 ensure
   Dn1sup::ExtensionStore.instance_variable_set(:@releases_cache, {})
   Dn1sup::ExtensionStore.instance_variable_set(:@release_cache, {})
+  Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, [])
   Dn1sup::ExtensionStore.instance_variable_set(:@fetching, false)
   Dn1sup::ExtensionStore.instance_variable_set(:@pending_force, false)
   Dn1sup::ExtensionStore.instance_variable_set(:@dialog, nil)
@@ -1068,6 +1093,13 @@ begin
   Dn1sup::Updater.define_singleton_method(:latest_release) { |*_a| {} }
   Dn1sup::ExtensionStore.instance_variable_set(:@release_cache, {})
   Dn1sup::ExtensionStore.instance_variable_set(:@releases_cache, {})
+  # Запись каталога — из автопоиска (готового списка в расширении нет)
+  Dn1sup::ExtensionStore.instance_variable_set(
+    :@discovered_entries,
+    [{ 'id' => 'dn1sup_save_settings', 'name' => 'DN1Sup Save Settings',
+       'description' => 'настройки', 'repo' => 'dn1test/dn1sup_save_settings',
+       'discovered' => true }]
+  )
 
   # Релизы GitHub недоступны — честная ошибка (локальных источников больше нет)
   res = Dn1sup::ExtensionStore.perform_check_update('dn1sup_save_settings')
@@ -1113,6 +1145,7 @@ ensure
   Dn1sup::Updater.define_singleton_method(:latest_release, orig_latest3)
   Dn1sup::ExtensionStore.instance_variable_set(:@release_cache, {})
   Dn1sup::ExtensionStore.instance_variable_set(:@releases_cache, {})
+  Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, [])
 end
 
 # 24. Смешанные копии апдейтера в Plugins: старый модуль в памяти не роняет
@@ -1183,6 +1216,13 @@ begin
   }
   Dn1sup::Updater.define_singleton_method(:releases) { |*_a, **_k| [] }
   Dn1sup::Updater.define_singleton_method(:latest_release) { |*_a| fake_release24 }
+  # Запись каталога — из автопоиска (готового списка в расширении нет)
+  Dn1sup::ExtensionStore.instance_variable_set(
+    :@discovered_entries,
+    [{ 'id' => 'dn1sup_save_settings', 'name' => 'DN1Sup Save Settings',
+       'description' => 'настройки', 'repo' => 'dn1test/dn1sup_save_settings',
+       'discovered' => true }]
+  )
   res = Dn1sup::ExtensionStore.perform_install('dn1sup_save_settings')
   assert 'install против старого апдейтера: ok без исключения', res['ok'] == true, res.inspect
   assert 'install против старого апдейтера: без тоста про исключение',
@@ -1208,6 +1248,7 @@ ensure
   Dn1sup::Updater.define_singleton_method(:product_status, orig_status24)
   Dn1sup::Updater.define_singleton_method(:install_from_url, orig_install_url24)
   Dn1sup::Updater.define_singleton_method(:local_dev_mtime, orig_mtime24)
+  Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, [])
   Sketchup.write_default('DN1Sup ExtensionStore', 'installed_dn1sup_save_settings', nil)
 end
 

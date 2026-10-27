@@ -1,4 +1,5 @@
 # Живая end-to-end проверка автопоиска и сборки каталога (как в менеджере).
+# Каталог строится запросом к GitHub: готового списка в расширении нет.
 # Запуск: ruby test/live_discovery_e2e.rb
 $stdout.sync = true
 
@@ -53,16 +54,10 @@ def file_loaded(_); true; end
 require_relative '../shared/dn1sup_updater'
 require_relative '../src/dn1sup_extension_store/main'
 
-# Если аргумент PROVE_NEW — сужаем реестр в памяти до одного расширения,
-# чтобы автопоиск «увидел» остальные репозитории аккаунта как новые.
-if ARGV.include?('PROVE_NEW')
-  Dn1sup::ExtensionStore.define_singleton_method(:load_registry) do
-    [{ 'id' => 'dn1sup_extension_store', 'name' => 'DN1Sup Extension Store', 'repo' => 'dn1test/dn1sup_extension_store' }]
-  end
-end
-
+# Каталог строится запросом к GitHub (готового списка в расширении нет):
+# сначала автопоиск репозиториев, затем опрос их релизов.
 found = Dn1sup::ExtensionStore.discover_repos
-puts "автопоиск нашёл новых репозиториев: #{found.size}"
+puts "автопоиск нашёл репозиториев: #{found.size}"
 found.each { |e| puts "  - #{e['id']} (#{e['repo']})" }
 Dn1sup::ExtensionStore.instance_variable_set(:@discovered_entries, found)
 

@@ -3,25 +3,22 @@
 
 # tools/pack.rb — сборка .rbz-архива Extension Store.
 #
-#   ruby tools/pack.rb                # собрать dn1sup_extension_store
+#   ruby tools/pack.rb
 #
+# Готового списка расширений в расширении нет: каталог строится запросом
+# к GitHub, поэтому никакой registry.json в архив не пакуется.
 # Исходники — в src/dn1sup_extension_store. Остальные расширения DN1Sup
 # собираются и выпускаются в собственных репозиториях; здесь хранится
-# только реестр (id/name/repo) для каталога, установки и обновлений.
+# только код менеджера каталога.
 #
 # В корень .rbz кладётся loader-файл <id>.rb, а папка <id>/ копируется целиком.
 # Общие файлы из shared/ (dn1sup_updater.rb) синхронизируются в архив автоматически.
 
-require 'json'
 require 'fileutils'
 require 'tmpdir'
 
-reg_path       = File.expand_path('../registry.json', __dir__)
 shared_updater = File.expand_path('../shared/dn1sup_updater.rb', __dir__)
 id_filter      = ARGV[0]
-
-# Базовый путь к внешним папкам проектов расширений
-EXT_BASE = ENV['SKETCHUP_EXT_ROOT'] || File.expand_path('../..', __dir__)
 
 # Что не должно попадать в релизный .rbz
 RBZ_EXCLUDE_FILES = %w[
@@ -82,7 +79,7 @@ def extract_version(loader_path, dir_path)
   nil
 end
 
-def pack(id, source, shared_updater, reg_path)
+def pack(id, source, shared_updater)
   src_loader = source[:loader]
   src_dir    = source[:dir]
   target_loader_name = source[:target_loader_name] || "#{id}.rb"
@@ -115,18 +112,11 @@ def pack(id, source, shared_updater, reg_path)
       FileUtils.cp(shared_updater, src_copy) if File.file?(src_copy)
     end
 
-    # 4. Для dn1sup_extension_store: комплектуем актуальный data/registry.json
-    if id == 'dn1sup_extension_store' && File.file?(reg_path)
-      data_dir = File.join(stage_plugin_dir, 'data')
-      FileUtils.mkdir_p(data_dir)
-      FileUtils.cp(reg_path, File.join(data_dir, 'registry.json'))
-    end
-
-    # 5. Выкидываем файлы разработки из архива
+    # 4. Выкидываем файлы разработки из архива
     RBZ_EXCLUDE_FILES.each { |f| FileUtils.rm_f(File.join(stage_plugin_dir, f)) }
     RBZ_EXCLUDE_DIRS.each  { |d| FileUtils.rm_rf(File.join(stage_plugin_dir, d)) }
 
-    # 6. Архивация в .rbz
+    # 5. Архивация в .rbz
     # Dir.glob трактует '\' как escape-символ, поэтому пути стадии на Windows
     # нормализуем в '/': иначе rubyzip-ветка молча упаковывала пустой архив.
     prefix = "#{stage}/".gsub('\\', '/')
@@ -157,39 +147,21 @@ def pack(id, source, shared_updater, reg_path)
   puts "  -> packages/#{id}.rbz (#{File.size(out)} bytes)"
 end
 
-registry = JSON.parse(File.read(reg_path))
 built = 0
-registry_updated = false
 
-registry.each do |entry|
-  id = entry['id']
+SOURCES.each_key do |id|
   next if id_filter && id != id_filter
 
   source = resolve_source(id)
-  next unless source && File.file?(source[:loader]) && File.directory?(source[:dir])
-
-  detected_ver = extract_version(source[:loader], source[:dir])
-  if detected_ver && detected_ver != entry['version']
-    puts "Обновление версии #{id}: #{entry['version']} -> #{detected_ver}"
-    entry['version'] = detected_ver
-    registry_updated = true
+  unless source && File.file?(source[:loader]) && File.directory?(source[:dir])
+    warn "Пропуск #{id}: нет loader-файла или директории плагина."
+    next
   end
 
-  print "Packing #{id} (v#{entry['version']})..."
-  pack(id, source, shared_updater, reg_path)
+  detected_ver = extract_version(source[:loader], source[:dir])
+  print "Packing #{id}#{detected_ver ? " (v#{detected_ver})" : ''}..."
+  pack(id, source, shared_updater)
   built += 1
-end
-
-# Всегда синхронизируем актуальный registry.json в src/dn1sup_extension_store/data/registry.json
-local_reg = File.expand_path('../src/dn1sup_extension_store/data/registry.json', __dir__)
-if File.directory?(File.dirname(local_reg))
-  FileUtils.cp(reg_path, local_reg)
-end
-
-if registry_updated
-  File.write(reg_path, JSON.pretty_generate(registry) + "\n")
-  FileUtils.cp(reg_path, local_reg) if File.directory?(File.dirname(local_reg))
-  puts "Обновлён registry.json с актуальными версиями."
 end
 
 if built.zero?
